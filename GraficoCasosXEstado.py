@@ -31,8 +31,8 @@ for col in ["V0001", "C006", "C008", "Q00201"]:
 # idade entre 25 e 59 anos
 # sexo = 1 homem, 2 mulher
 # Q00201 == 1 => verdadeiro/contado
-mask = df["C008"].between(25, 59, inclusive="both") & df["C006"].isin([1, 2]) & df["Q00201"].eq(1)
-df = df[mask].copy()
+pop = df[df["C008"].between(25, 59, inclusive="both") & df["C006"].isin([1, 2])].copy()
+casos = pop[pop["Q00201"].eq(1)].copy()
 
 # Mapeia os códigos dos estados para nomes
 uf_map = {
@@ -44,20 +44,66 @@ uf_map = {
     50: "Mato Grosso do Sul", 51: "Mato Grosso", 52: "Goiás", 53: "Distrito Federal"
 }
 
-# Conta por estado e sexo
-contagem = (
-    df.groupby(["V0001", "C006"]).size()
-      .unstack(fill_value=0)
-      .rename(columns={1: "Homens", 2: "Mulheres"})
-      .reindex(columns=["Homens", "Mulheres"], fill_value=0)
+# Contagem de entrevistas e casos por estado e sexo
+entrevistas = (
+    pop.groupby(["V0001", "C006"]).size()
+       .unstack(fill_value=0)
+       .rename(columns={1: "Homens", 2: "Mulheres"})
+       .reindex(columns=["Homens", "Mulheres"], fill_value=0)
 )
 
+casos_estado_sexo = (
+    casos.groupby(["V0001", "C006"]).size()
+         .unstack(fill_value=0)
+         .rename(columns={1: "Homens", 2: "Mulheres"})
+         .reindex(columns=["Homens", "Mulheres"], fill_value=0)
+)
+
+# Relativo: casos / entrevistas por estado e sexo
+relativo = casos_estado_sexo.div(entrevistas.replace(0, pd.NA))
+relativo = relativo.fillna(0)
+
+# Consolidado para o relatório final
+contagem = casos_estado_sexo.copy()
 contagem.index = contagem.index.map(lambda x: uf_map.get(int(x), str(x)))
 contagem["Total"] = contagem.sum(axis=1)
-contagem = contagem.sort_values("Total", ascending=True).drop(columns=["Total"])
+contagem = contagem.sort_values("Total", ascending=True)
+
+# Tabela completa com números absolutos e relativos por estado
+casos_nome = casos_estado_sexo.copy()
+casos_nome.index = casos_nome.index.map(lambda x: uf_map.get(int(x), str(x)))
+
+entrevistas_nome = entrevistas.copy()
+entrevistas_nome.index = entrevistas_nome.index.map(lambda x: uf_map.get(int(x), str(x)))
+
+relativo_nome = relativo.copy()
+relativo_nome.index = relativo_nome.index.map(lambda x: uf_map.get(int(x), str(x)))
+
+relatorio = pd.concat(
+    [
+        casos_nome.add_prefix("Casos_"),
+        entrevistas_nome.add_prefix("Entrevistas_"),
+    ],
+    axis=1,
+)
+relatorio["Casos_Total"] = relatorio[["Casos_Homens", "Casos_Mulheres"]].sum(axis=1)
+relatorio["Entrevistas_Total"] = relatorio[["Entrevistas_Homens", "Entrevistas_Mulheres"]].sum(axis=1)
+relatorio["Taxa_relativa_Homens"] = relatorio["Casos_Homens"] / relatorio["Entrevistas_Homens"].replace(0, pd.NA)
+relatorio["Taxa_relativa_Mulheres"] = relatorio["Casos_Mulheres"] / relatorio["Entrevistas_Mulheres"].replace(0, pd.NA)
+relatorio["Taxa_relativa_Total"] = relatorio["Casos_Total"] / relatorio["Entrevistas_Total"].replace(0, pd.NA)
+relatorio = relatorio.fillna(0)
+
+# Exibe o relatório completo
+print("\nRelatório completo: casos, entrevistas e taxa relativa por estado e sexo")
+print(relatorio.to_string())
+
+# Exporta a tabela em CSV
+csv_relatorio = base_dir / "relatorio_q00201_estado_sexo.csv"
+relatorio.to_csv(csv_relatorio, index_label="Estado")
+print(f"\nRelatório exportado em: {csv_relatorio}")
 
 # Gráfico de barras agrupadas por estado
-ax = contagem.plot(
+ax = contagem.drop(columns=["Total"]).plot(
     kind="bar",
     figsize=(16, 8),
     width=0.8,

@@ -22,14 +22,13 @@ df = pd.read_csv(
 for col in ["C008", "Q00201"]:
     df[col] = pd.to_numeric(df[col], errors="coerce")
 
-# População de interesse: idade entre 25 e 59 e resposta Q00201 igual a 1.
-casos = df[
-    df["C008"].between(25, 59, inclusive="both") & df["Q00201"].eq(1)
-].copy()
+# População de interesse: todas as idades observadas com resposta Q00201 igual a 1.
+casos = df[df["Q00201"].eq(1)].dropna(subset=["C008"]).copy()
 
-# Cada idade é uma classe, inclusive as idades sem ocorrência.
-idades = pd.Index(range(25, 60), name="Idade")
-frequencia = casos.groupby("C008").size().reindex(idades, fill_value=0)
+# Cada idade observada é uma classe.
+frequencia = casos.groupby("C008").size().sort_index()
+frequencia.index.name = "Idade"
+idades = frequencia.index
 total = int(frequencia.sum())
 
 tabela = pd.DataFrame({"Frequência": frequencia.astype(int)})
@@ -75,7 +74,7 @@ ax.plot(
     linewidth=2,
     color="#176b87",
 )
-ax.set_title("Frequência relativa acumulada por idade (colesterol alto, 25 a 59 anos)")
+ax.set_title("Frequência relativa acumulada por todas as idades (colesterol alto)")
 ax.set_xlabel("Idade (anos)")
 ax.set_ylabel("Frequência relativa acumulada (%)")
 ax.set_xticks(list(idades))

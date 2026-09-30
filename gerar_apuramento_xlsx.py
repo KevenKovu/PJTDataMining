@@ -4,8 +4,14 @@ from datetime import datetime
 from pathlib import Path
 from xml.sax.saxutils import escape
 
-CSV_PATH = Path(r"d:\Data mining\PJTDataMining\pns2019.csv")
-OUTPUT_PATH = Path(r"d:\Data mining\PJTDataMining\apuramento_idades_25_59.xlsx")
+BASE_DIR = Path(__file__).resolve().parent
+CSV_PATH = BASE_DIR / "pns-2019.csv"
+OUTPUT_PATH = BASE_DIR / "apuramento_idades_25_59.xlsx"
+
+if not CSV_PATH.exists():
+    alt_csv = BASE_DIR / "pns2019.csv"
+    if alt_csv.exists():
+        CSV_PATH = alt_csv
 
 ATTRS = [
     "V0026",
@@ -125,12 +131,20 @@ def excel_cell_xml(value, cell_ref):
     return f'<c r="{cell_ref}" t="inlineStr"><is><t>{escape(text)}</t></is></c>'
 
 
+def excel_col_name(index):
+    result = ""
+    while index > 0:
+        index, remainder = divmod(index - 1, 26)
+        result = chr(65 + remainder) + result
+    return result
+
+
 def build_sheet_xml(headers, rows):
     xml_rows = []
     for r_idx, row in enumerate([headers] + rows, start=1):
         cells = []
         for c_idx, value in enumerate(row, start=1):
-            cell_ref = f"{chr(64 + c_idx)}{r_idx}"
+            cell_ref = f"{excel_col_name(c_idx)}{r_idx}"
             cells.append(excel_cell_xml(value, cell_ref))
         xml_rows.append(f'<row r="{r_idx}">' + ''.join(cells) + '</row>')
     return ''.join(xml_rows)

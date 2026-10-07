@@ -1,0 +1,30 @@
+﻿Variável,Tipo,Nº de Ausentes,Mínimo,Máximo,Média,Mediana,Desvio Padrão
+C008 - Idade (anos),I,0,25.0,59.0,46.88,48.0,8.89
+P00104 - Peso final (kg),R,38,34.0,176.0,75.95,74.0,16.25
+P00404 - Altura final (cm),I,38,129.0,204.0,163.85,163.0,9.7
+W00101 - Peso - 1ª pesagem (kg),R,6761,42.4,134.0,75.73,73.8,16.28
+W00201 - Altura - 1ª medição (cm),R,6762,119.3,189.0,162.09,161.0,10.22
+IMC - Índice de Massa Corporal (calculado),R,38,14.6,56.9,28.2,27.6,5.1
+E01602 - Rendimento bruto mensal do trabalho (R$),I,2467,18.0,60000.0,2673.05,1450.0,4069.89
+VDF002 - Rendimento domiciliar (R$),I,1,0.0,110000.0,4511.06,2500.0,6641.38
+VDF003 - Rendimento domiciliar per capita (R$),I,1,0.0,42900.0,1805.76,998.0,2823.56
+J012 - Nº de consultas médicas nos últimos 12 meses,I,674,1.0,365.0,4.67,3.0,8.06
+P006 - Dias/semana que come feijão (0-7),I,0,0.0,7.0,4.9,6.0,2.4
+P01101 - Dias/semana que come carne vermelha (0-7),I,0,0.0,7.0,3.14,3.0,2.05
+P013 - Dias/semana que come frango/galinha (0-7),I,0,0.0,7.0,2.96,3.0,1.78
+P015 - Dias/semana que come peixe (0-7),I,0,0.0,7.0,1.13,1.0,1.5
+P01601 - Dias/semana que toma suco de fruta natural (0-7),I,0,0.0,7.0,2.68,2.0,2.46
+P018 - Dias/semana que come frutas (0-7),I,0,0.0,7.0,4.19,4.0,2.51
+P023 - Dias/semana que toma leite (0-7),I,0,0.0,7.0,3.56,3.0,3.06
+P02001 - Dias/semana que toma suco de caixinha/refresco em pó (0-7),I,0,0.0,7.0,0.94,0.0,1.92
+P02002 - Dias/semana que toma refrigerante (0-7),I,0,0.0,7.0,0.9,0.0,1.58
+P02501 - Dias/semana que come doces/ultraprocessados (0-7),I,0,0.0,7.0,1.54,1.0,2.13
+P02602 - Dias/semana que substitui o almoço por lanche rápido (0-7),I,0,0.0,7.0,0.4,0.0,1.07
+P035 - Dias/semana que pratica exercício (0-7),I,4031,0.0,7.0,3.48,3.0,1.82
+P03701 - Duração do exercício - horas,I,4132,0.0,10.0,0.88,1.0,0.71
+P03702 - Duração do exercício - minutos,I,4132,0.0,59.0,14.64,0.0,17.21
+P05901 - Anos desde que parou de fumar,I,5053,0.0,56.0,16.66,15.0,10.83
+P02801 - Dias/semana que consome álcool (0-7),I,5191,0.0,7.0,1.72,1.0,1.53
+P029 - Doses de álcool no dia em que bebe,I,4259,1.0,50.0,4.54,3.0,4.5
+P03202 - Máximo de doses em uma única ocasião,I,6019,5.0,80.0,10.71,10.0,6.99
+Q061 - Idade no diagnóstico de colesterol alto,I,0,0.0,59.0,40.2,42.0,12.21

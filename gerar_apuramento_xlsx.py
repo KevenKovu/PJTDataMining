@@ -5,9 +5,10 @@ Transformações no CSV filtrado de colesterol (PNS 2019, 25 a 59 anos).
 Gera um novo CSV, preservando o arquivo original, com:
 1) Filtro de renda per capita: VDF003 < R$ 3.500,00
 2) QTD_COMORBIDADES
-3) CONSUMO_ALCOOL
-4) REGIAO
-5) Remoção das colunas W00101 e W00201
+3) Exclusão por limites em P03701, QTD_COMORBIDADES e J012
+4) CONSUMO_ALCOOL
+5) REGIAO
+6) Remoção das colunas W00101 e W00201
 """
 
 import sys
@@ -23,7 +24,7 @@ import pandas as pd
 # ---------------------------------------------------------------------------
 
 NOME_CSV = "pns_colesterol_25_59_v3.csv"
-NOME_CSV_SAIDA = "pns_colesterol_25_59_v4.csv"
+NOME_CSV_SAIDA = "pns_colesterol_25_59_v5.csv"
 
 # --- 1) Filtro de renda per capita ---
 COLUNA_RENDA_PER_CAPITA = "VDF003"
@@ -51,7 +52,19 @@ NOME_COL_COMORBIDADES = "QTD_COMORBIDADES"
 # False: se houver resposta ausente, a contagem fica vazia.
 AUSENTE_COMO_NAO = True
 
-# --- 3) Álcool ---
+# --- Limites para exclusão de pessoas ---
+# Os limites máximos são inclusivos; valores ausentes nessas colunas são mantidos.
+LIMITES_MAXIMOS = {
+    "P03701": 4,
+    "QTD_COMORBIDADES": 7,
+}
+
+# Mantém somente valores estritamente abaixo do limite; ausentes são excluídos.
+LIMITES_INFERIORES_EXCLUSIVOS = {
+    "J012": 25,
+}
+
+# --- 4) Álcool ---
 COLUNAS_ALCOOL = ["P027", "P02801", "P029", "P03201", "P03202"]
 NOME_COL_ALCOOL = "CONSUMO_ALCOOL"
 
@@ -61,7 +74,7 @@ ROTULO_NUNCA = "Nunca"
 ROTULO_AS_VEZES = "Às vezes"
 ROTULO_SEMPRE = "Sempre"
 
-# --- 4) Região ---
+# --- 5) Região ---
 COLUNA_UF = "V0001"
 NOME_COL_REGIAO = "REGIAO"
 
@@ -96,7 +109,7 @@ REGIAO_POR_PRIMEIRO_DIGITO = {
     5: "Centro-Oeste",
 }
 
-# --- 5) Colunas a remover ---
+# --- 6) Colunas a remover ---
 COLUNAS_REMOVER = ["W00101", "W00201"]
 
 
@@ -344,6 +357,46 @@ def mapear_regiao(df):
     return regiao
 
 
+def aplicar_limites_exclusao(df):
+    for coluna, limite in LIMITES_MAXIMOS.items():
+        if coluna not in df.columns:
+            print(
+                f"   [AVISO] Coluna '{coluna}' não encontrada; "
+                "limite não aplicado."
+            )
+            continue
+
+        valores = pd.to_numeric(df[coluna], errors="coerce")
+        manter = valores.isna() | (valores <= limite)
+        removidos = int((~manter).sum())
+        df = df.loc[manter].copy()
+
+        print(
+            f"   {coluna}: limite {limite}; "
+            f"{removidos} registro(s) removido(s) acima do limite."
+        )
+
+    for coluna, limite in LIMITES_INFERIORES_EXCLUSIVOS.items():
+        if coluna not in df.columns:
+            print(
+                f"   [AVISO] Coluna '{coluna}' não encontrada; "
+                "limite não aplicado."
+            )
+            continue
+
+        valores = pd.to_numeric(df[coluna], errors="coerce")
+        manter = valores.notna() & (valores < limite)
+        removidos = int((~manter).sum())
+        df = df.loc[manter].copy()
+
+        print(
+            f"   {coluna}: somente valores abaixo de {limite}; "
+            f"{removidos} registro(s) removido(s)."
+        )
+
+    return df
+
+
 # ---------------------------------------------------------------------------
 # 4) EXECUÇÃO
 # ---------------------------------------------------------------------------
@@ -420,11 +473,18 @@ def main():
         print("\n2) Comorbidades: nenhuma coluna encontrada; etapa pulada.")
 
     # -----------------------------------------------------------------------
-    # 3) CONSUMO DE ÁLCOOL
+    # 3) LIMITES DE EXCLUSÃO
+    # -----------------------------------------------------------------------
+
+    print("\n3) Limites de exclusão")
+    df = aplicar_limites_exclusao(df)
+
+    # -----------------------------------------------------------------------
+    # 4) CONSUMO DE ÁLCOOL
     # -----------------------------------------------------------------------
 
     if "P027" in df.columns:
-        print("\n3) Consumo de álcool")
+        print("\n4) Consumo de álcool")
 
         alcool = classificar_alcool(df)
 
@@ -444,14 +504,14 @@ def main():
             .to_string()
         )
     else:
-        print("\n3) Álcool: coluna P027 não encontrada; etapa pulada.")
+        print("\n4) Álcool: coluna P027 não encontrada; etapa pulada.")
 
     # -----------------------------------------------------------------------
-    # 4) REGIÃO
+    # 5) REGIÃO
     # -----------------------------------------------------------------------
 
     if COLUNA_UF in df.columns:
-        print("\n4) Região")
+        print("\n5) Região")
 
         regiao = mapear_regiao(df)
 
@@ -472,12 +532,12 @@ def main():
         )
     else:
         print(
-            f"\n4) Região: coluna {COLUNA_UF} não encontrada; "
+            f"\n5) Região: coluna {COLUNA_UF} não encontrada; "
             "etapa pulada."
         )
 
     # -----------------------------------------------------------------------
-    # 5) REMOÇÃO DE PESO E ALTURA
+    # 6) REMOÇÃO DE PESO E ALTURA
     # -----------------------------------------------------------------------
 
     a_remover = [

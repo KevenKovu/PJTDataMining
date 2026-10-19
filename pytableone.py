@@ -43,7 +43,7 @@ import pandas as pd
 # 0) CONFIGURAÇÃO
 # ---------------------------------------------------------------------------
 
-NOME_CSV = "pns_colesterol_25_59_v4.csv"
+NOME_CSV = "pns_colesterol_25_59_v5.csv"
 ARQUIVO_SAIDA = "ap5_tabela_descritiva_colesterol.xlsx"
 
 INCLUIR_DIMENSAO = False     # True -> acrescenta a coluna "Dimensão" nas duas tabelas

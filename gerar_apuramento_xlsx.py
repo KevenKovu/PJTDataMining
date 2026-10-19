@@ -1,406 +1,539 @@
 # -*- coding: utf-8 -*-
 """
-AP5 - Análise descritiva (Table One) | PNS 2019 | Colesterol alto | 25 a 59 anos
-==============================================================================
-Lê o CSV JÁ FILTRADO (25 a 59 anos, questionário do adulto selecionado concluído,
-Q060 = "Sim") e gera as duas tabelas pedidas em aula:
+Transformações no CSV filtrado de colesterol (PNS 2019, 25 a 59 anos).
 
-  (1) Variáveis numéricas:
-      Variável | Tipo (I/R) | Nº de Ausentes | Mínimo | Máximo | Média | Mediana | Desvio Padrão
-
-  (2) Variáveis categóricas:
-      Variável | Tipo (B/O/N) | Nº de Ausentes | Valores | Frequência por valor | Moda
-
-Como usar no VS Code
---------------------
-1) Coloque este arquivo .py e o CSV (pns_colesterol_25_59_v3.csv) na MESMA pasta.
-   Se o CSV estiver em outro lugar, ajuste NOME_CSV abaixo ou passe o caminho
-   como argumento:  python ap5_tabela_descritiva_colesterol.py "C:\\caminho\\arquivo.csv"
-2) No terminal do VS Code:  pip install pandas openpyxl
-3) Clique em "Run Python File" (▶) ou rode:  python ap5_tabela_descritiva_colesterol.py
-4) O script imprime as tabelas no terminal e salva "ap5_tabela_descritiva_colesterol.xlsx"
-   (abas "Numéricas" e "Categóricas") na mesma pasta do script.
-
-Observações sobre os dados
---------------------------
-- No CSV, as variáveis categóricas já vêm com o RÓTULO em texto (ex.: "Homem",
-  "Sim") e as numéricas com o valor. Célula vazia = ausente (pergunta não aplicável
-  ou sem resposta).
-- Variáveis que são faixas/categorias codificadas com número (P02601, P04501,
-  P04502) também funcionam se o seu CSV ainda tiver os códigos 1, 2, 3... em vez dos
-  rótulos: o script converte usando o dicionário da PNS (campo "rotulos" abaixo).
-- Q060 (a pergunta determinante) é constante ("Sim" para todos), então fica de fora
-  das tabelas por padrão (veja IGNORAR). Tire-a de lá se quiser mostrá-la.
+Gera um novo CSV, preservando o arquivo original, com:
+1) Filtro de renda per capita: VDF003 < R$ 3.500,00
+2) QTD_COMORBIDADES
+3) CONSUMO_ALCOOL
+4) REGIAO
+5) Remoção das colunas W00101 e W00201
 """
 
 import sys
+import unicodedata
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
 
 # ---------------------------------------------------------------------------
 # 0) CONFIGURAÇÃO
 # ---------------------------------------------------------------------------
 
 NOME_CSV = "pns_colesterol_25_59_v3.csv"
-ARQUIVO_SAIDA = "ap5_tabela_descritiva_colesterol.xlsx"
+NOME_CSV_SAIDA = "pns_colesterol_25_59_v4.csv"
 
-INCLUIR_DIMENSAO = False     # True -> acrescenta a coluna "Dimensão" nas duas tabelas
-MOSTRAR_PERCENTUAL = True    # True -> "Sim: 3229 (44,48%)"; False -> "Sim: 3229"
-IGNORAR = {"Q060"}           # variáveis do CSV que NÃO entram nas tabelas
-VALORES_AUSENTES_TEXTO = {"Ignorado"}   # rótulos que contam como ausente
+# --- 1) Filtro de renda per capita ---
+COLUNA_RENDA_PER_CAPITA = "VDF003"
+LIMITE_RENDA_PER_CAPITA = 3500.0
+
+# --- 2) Comorbidades ---
+# Q060 (colesterol alto) não entra na contagem, pois define a amostra.
+COLUNAS_COMORBIDADES = [
+    "Q00201",  # Hipertensão arterial
+    "Q03001",  # Diabetes
+    "Q06306",  # Doença do coração
+    "Q068",    # AVC
+    "Q074",    # Asma
+    "Q079",    # Artrite/reumatismo
+    "Q084",    # Problema crônico de coluna
+    "Q092",    # Depressão
+    "Q11604",  # Doença pulmonar crônica
+    "Q124",    # Insuficiência renal crônica
+    "Q120",    # Câncer
+]
+
+NOME_COL_COMORBIDADES = "QTD_COMORBIDADES"
+
+# True: respostas ausentes contam como ausência de comorbidade.
+# False: se houver resposta ausente, a contagem fica vazia.
+AUSENTE_COMO_NAO = True
+
+# --- 3) Álcool ---
+COLUNAS_ALCOOL = ["P027", "P02801", "P029", "P03201", "P03202"]
+NOME_COL_ALCOOL = "CONSUMO_ALCOOL"
+
+DIAS_SEMANA_PARA_SEMPRE = 1
+
+ROTULO_NUNCA = "Nunca"
+ROTULO_AS_VEZES = "Às vezes"
+ROTULO_SEMPRE = "Sempre"
+
+# --- 4) Região ---
+COLUNA_UF = "V0001"
+NOME_COL_REGIAO = "REGIAO"
+
+REGIOES_POR_UF = {
+    "Norte": [
+        "Rondônia", "Acre", "Amazonas", "Roraima",
+        "Pará", "Amapá", "Tocantins"
+    ],
+    "Nordeste": [
+        "Maranhão", "Piauí", "Ceará", "Rio Grande do Norte",
+        "Paraíba", "Pernambuco", "Alagoas", "Sergipe", "Bahia"
+    ],
+    "Sudeste": [
+        "Minas Gerais", "Espírito Santo",
+        "Rio de Janeiro", "São Paulo"
+    ],
+    "Sul": [
+        "Paraná", "Santa Catarina", "Rio Grande do Sul"
+    ],
+    "Centro-Oeste": [
+        "Mato Grosso do Sul", "Mato Grosso",
+        "Goiás", "Distrito Federal"
+    ],
+}
+
+# Códigos numéricos das UFs: 11 a 17, 21 a 29 etc.
+REGIAO_POR_PRIMEIRO_DIGITO = {
+    1: "Norte",
+    2: "Nordeste",
+    3: "Sudeste",
+    4: "Sul",
+    5: "Centro-Oeste",
+}
+
+# --- 5) Colunas a remover ---
+COLUNAS_REMOVER = ["W00101", "W00201"]
+
 
 try:
     PASTA = Path(__file__).resolve().parent
-except NameError:            # rodando em célula interativa / notebook
+except NameError:
     PASTA = Path.cwd()
 
 
 # ---------------------------------------------------------------------------
-# 1) ESPECIFICAÇÃO DAS VARIÁVEIS (67 variáveis + Q060)
-#    classe: "numerica" ou "categorica"
-#    tipo:   numéricas -> I (inteira) / R (real)
-#            categóricas -> B (binária) / O (ordinal) / N (nominal)
-#    rotulos: código PNS -> rótulo (só é usado se a coluna vier numérica no CSV;
-#             a ordem dos rótulos também define a ordem natural das categorias)
-#    ordem:   ordem natural das categorias de uma ordinal (quando não há "rotulos")
-#    Categorias fora da lista "ordem" vão para o fim, da mais para a menos frequente.
-# ---------------------------------------------------------------------------
-
-NUM, CAT = "numerica", "categorica"
-
-
-def V(codigo, nome, classe, tipo, dimensao, rotulos=None, ordem=None):
-    return dict(codigo=codigo, nome=nome, classe=classe, tipo=tipo,
-                dimensao=dimensao, rotulos=rotulos, ordem=ordem)
-
-
-DEMO = "Demografia"
-SAUDE = "Condições de saúde"
-SOCIO = "Característica socioeconômica"
-ALIM = "Hábitos alimentares"
-VIDA = "Estilo de vida"
-
-ROT_TV = {1: "Menos de uma hora", 2: "De uma hora a menos de duas horas",
-          3: "De duas horas a menos de três horas", 4: "De três horas a menos de seis horas",
-          5: "Seis horas ou mais", 6: "Não assiste televisão"}
-ROT_TELA = {**ROT_TV, 6: "Não costuma usar computador, tablet ou celular no tempo livre"}
-ROT_SAL = {1: "Muito alto", 2: "Alto", 3: "Adequado", 4: "Baixo", 5: "Muito baixo"}
-
-VARSPEC = [
-    # ---------------- Demografia (características do indivíduo + antropometria) ----------------
-    V("C008", "Idade (anos)", NUM, "I", DEMO),
-    V("C006", "Sexo", CAT, "B", DEMO),
-    V("C009", "Cor ou raça", CAT, "N", DEMO),
-    V("P00104", "Peso final (kg)", NUM, "R", DEMO),
-    V("P00404", "Altura final (cm)", NUM, "I", DEMO),
-    V("W00101", "Peso - 1ª pesagem (kg)", NUM, "R", DEMO),
-    V("W00201", "Altura - 1ª medição (cm)", NUM, "R", DEMO),
-    V("IMC", "Índice de Massa Corporal (calculado)", NUM, "R", DEMO),
-
-    # ---------------- Condições de saúde ----------------
-    V("Q00201", "Diagnóstico de hipertensão arterial", CAT, "B", SAUDE),
-    V("Q03001", "Diagnóstico de diabetes", CAT, "B", SAUDE),
-    V("Q068", "Diagnóstico de AVC", CAT, "B", SAUDE),
-    V("Q074", "Diagnóstico de asma", CAT, "B", SAUDE),
-    V("Q079", "Diagnóstico de artrite/reumatismo", CAT, "B", SAUDE),
-    V("Q084", "Diagnóstico de problema crônico de coluna", CAT, "B", SAUDE),
-    V("Q092", "Diagnóstico de depressão", CAT, "B", SAUDE),
-    V("Q11604", "Diagnóstico de doença pulmonar crônica", CAT, "B", SAUDE),
-    V("Q124", "Diagnóstico de insuficiência renal crônica", CAT, "B", SAUDE),
-    V("Q120", "Diagnóstico de câncer", CAT, "B", SAUDE),
-    V("N001", "Autoavaliação do estado de saúde", CAT, "O", SAUDE,
-      ordem=["Muito boa", "Boa", "Regular", "Ruim", "Muito ruim"]),
-
-    # ---------------- Característica socioeconômica ----------------
-    V("V0001", "Unidade da Federação", CAT, "N", SOCIO),
-    V("V0026", "Situação urbana/rural", CAT, "B", SOCIO),
-    V("VDD004A", "Escolaridade (nível de instrução mais elevado)", CAT, "O", SOCIO,
-      ordem=["Sem instrução", "Fundamental incompleto ou equivalente",
-             "Fundamental completo ou equivalente", "Médio incompleto ou equivalente",
-             "Médio completo ou equivalente", "Superior incompleto ou equivalente",
-             "Superior completo"]),
-    V("VDE001", "Condição na força de trabalho", CAT, "B", SOCIO),
-    V("VDE002", "Condição de ocupação", CAT, "B", SOCIO),
-    V("E001", "Trabalhou na semana de referência", CAT, "B", SOCIO),
-    V("E01602", "Rendimento bruto mensal do trabalho (R$)", NUM, "I", SOCIO),
-    V("VDF002", "Rendimento domiciliar (R$)", NUM, "I", SOCIO),
-    V("VDF003", "Rendimento domiciliar per capita (R$)", NUM, "I", SOCIO),
-    V("I00102", "Possui plano de saúde médico", CAT, "B", SOCIO),
-    V("J001", "Estado de saúde (avaliação geral do morador)", CAT, "O", SOCIO,
-      ordem=["Muito bom", "Bom", "Regular", "Ruim", "Muito ruim"]),
-    V("J009", "Procura sempre o mesmo local/médico de saúde", CAT, "B", SOCIO),
-    V("J01101", "Tempo desde a última consulta médica", CAT, "O", SOCIO,
-      ordem=["Até 1 ano", "Mais de 1 ano a 2 anos", "Mais de 2 anos a 3 anos",
-             "Mais de 3 anos", "Nunca foi ao médico"]),
-    V("J012", "Nº de consultas médicas nos últimos 12 meses", NUM, "I", SOCIO),
-    V("J014", "Procurou atendimento de saúde nas últimas 2 semanas", CAT, "B", SOCIO),
-
-    # ---------------- Hábitos alimentares ----------------
-    V("P006", "Dias/semana que come feijão (0-7)", NUM, "I", ALIM),
-    V("P01101", "Dias/semana que come carne vermelha (0-7)", NUM, "I", ALIM),
-    V("P013", "Dias/semana que come frango/galinha (0-7)", NUM, "I", ALIM),
-    V("P015", "Dias/semana que come peixe (0-7)", NUM, "I", ALIM),
-    V("P01001", "Vezes por dia que come verdura/legume", CAT, "O", ALIM,
-      ordem=["Uma vez por dia (no almoço ou no jantar).",
-             "Duas vezes por dia (no almoço e no jantar).",
-             "Três vezes ou mais por dia."]),
-    V("P01601", "Dias/semana que toma suco de fruta natural (0-7)", NUM, "I", ALIM),
-    V("P018", "Dias/semana que come frutas (0-7)", NUM, "I", ALIM),
-    V("P019", "Vezes por dia que come frutas", CAT, "O", ALIM,
-      ordem=["Uma vez por dia", "Duas vezes por dia", "Três vezes ou mais por dia."]),
-    V("P023", "Dias/semana que toma leite (0-7)", NUM, "I", ALIM),
-    V("P02401", "Tipo de leite que costuma tomar", CAT, "N", ALIM),
-    V("P02001", "Dias/semana que toma suco de caixinha/refresco em pó (0-7)", NUM, "I", ALIM),
-    V("P02002", "Dias/semana que toma refrigerante (0-7)", NUM, "I", ALIM),
-    V("P02501", "Dias/semana que come doces/ultraprocessados (0-7)", NUM, "I", ALIM),
-    V("P02601", "Percepção do consumo de sal", CAT, "O", ALIM, rotulos=ROT_SAL),
-    V("P02602", "Dias/semana que substitui o almoço por lanche rápido (0-7)", NUM, "I", ALIM),
-
-    # ---------------- Estilo de vida ----------------
-    V("P034", "Praticou exercício/esporte nos últimos 3 meses", CAT, "B", VIDA),
-    V("P035", "Dias/semana que pratica exercício (0-7)", NUM, "I", VIDA),
-    V("P036", "Exercício/esporte praticado com mais frequência", CAT, "N", VIDA),
-    V("P03701", "Duração do exercício - horas", NUM, "I", VIDA),
-    V("P03702", "Duração do exercício - minutos", NUM, "I", VIDA),
-    V("P038", "Anda bastante a pé no trabalho", CAT, "B", VIDA),
-    V("P04501", "Horas por dia assistindo TV (faixas)", CAT, "O", VIDA, rotulos=ROT_TV),
-    V("P04502", "Horas por dia de tela no tempo livre (faixas)", CAT, "O", VIDA, rotulos=ROT_TELA),
-    V("P050", "Fuma atualmente", CAT, "N", VIDA),
-    V("P052", "Já fumou no passado", CAT, "N", VIDA),
-    V("P05901", "Anos desde que parou de fumar", NUM, "I", VIDA),
-    V("P027", "Frequência de consumo de bebida alcoólica", CAT, "O", VIDA,
-      ordem=["Não bebo nunca", "Menos de uma vez por mês", "Uma vez ou mais por mês"]),
-    V("P02801", "Dias/semana que consome álcool (0-7)", NUM, "I", VIDA),
-    V("P029", "Doses de álcool no dia em que bebe", NUM, "I", VIDA),
-    V("P03201", "Consumo de 5+ doses em uma ocasião (últimos 30 dias)", CAT, "B", VIDA),
-    V("P03202", "Máximo de doses em uma única ocasião", NUM, "I", VIDA),
-    V("Q060", "Diagnóstico de colesterol alto (determinante)", CAT, "B", VIDA),
-    V("Q061", "Idade no diagnóstico de colesterol alto", NUM, "I", VIDA),
-    V("Q06306", "Diagnóstico de doença do coração", CAT, "B", VIDA),
-]
-
-
-# ---------------------------------------------------------------------------
-# 2) LEITURA DO CSV
+# 1) LEITURA DO CSV
 # ---------------------------------------------------------------------------
 
 def localizar_csv():
-    """Procura o CSV: argumento da linha de comando > NOME_CSV > qualquer *colesterol*.csv."""
     if len(sys.argv) > 1:
         caminho = Path(sys.argv[1])
+
         if caminho.exists():
             return caminho
+
         raise SystemExit(f"Arquivo não encontrado: {caminho}")
 
     for pasta in (PASTA, Path.cwd()):
         for nome in (NOME_CSV, "pnscolesterol2559v3.csv"):
             if (pasta / nome).exists():
                 return pasta / nome
-        achados = sorted(pasta.glob("*colesterol*.csv"))
+
+        achados = [
+            p for p in sorted(pasta.glob("*colesterol*.csv"))
+            if p.name != NOME_CSV_SAIDA
+            and "tratado" not in p.name.lower()
+            and "_novo" not in p.stem.lower()
+        ]
+
         if achados:
             return achados[0]
 
     csvs = [p.name for p in PASTA.glob("*.csv")]
+
     raise SystemExit(
-        f"CSV '{NOME_CSV}' não encontrado em:\n  {PASTA}\n"
-        f"CSVs que existem nessa pasta: {csvs or 'nenhum'}\n"
-        "Coloque o CSV na mesma pasta do script ou ajuste NOME_CSV."
+        f"CSV '{NOME_CSV}' não encontrado em:\n{PASTA}\n"
+        f"CSVs nessa pasta: {csvs or 'nenhum'}"
     )
 
 
 def ler_csv(caminho):
     with open(caminho, "r", encoding="utf-8-sig", errors="ignore") as f:
         primeira = f.readline()
-    sep = ";" if primeira.count(";") > primeira.count(",") else ","
-    for enc in ("utf-8-sig", "latin1"):
+
+    separador = ";" if primeira.count(";") > primeira.count(",") else ","
+
+    for encoding in ("utf-8-sig", "latin1"):
         try:
-            return pd.read_csv(caminho, sep=sep, encoding=enc, low_memory=False)
+            df = pd.read_csv(
+                caminho,
+                sep=separador,
+                encoding=encoding,
+                low_memory=False
+            )
+            return df, separador
         except UnicodeDecodeError:
             continue
-    raise SystemExit("Não consegui ler o CSV (encoding desconhecido).")
+
+    raise SystemExit("Não foi possível ler o CSV: encoding desconhecido.")
 
 
 # ---------------------------------------------------------------------------
-# 3) PREPARO DAS COLUNAS
+# 2) FUNÇÕES AUXILIARES
 # ---------------------------------------------------------------------------
 
-def preparar_numerica(serie):
-    return pd.to_numeric(serie, errors="coerce")
+def _norm(x):
+    """Normaliza texto, removendo acentos e espaços nas pontas."""
 
-
-def preparar_categorica(serie, spec):
-    """Devolve a coluna como texto (rótulos); ausentes viram NaN."""
-    if pd.api.types.is_numeric_dtype(serie):
-        # CSV com códigos numéricos: converte com o dicionário da PNS (campo "rotulos")
-        rot = spec.get("rotulos") or {}
-        s = serie.map(lambda x: np.nan if pd.isna(x) else rot.get(int(x), str(int(x))))
-        s = s.astype(object)
-    else:
-        s = serie.astype(object).map(lambda x: np.nan if pd.isna(x) else str(x).strip())
-        s = s.where(s != "", np.nan)
-    return s.where(~s.isin(VALORES_AUSENTES_TEXTO), np.nan)
-
-
-def _valor(x):
-    """Inteiro quando o número é redondo; senão, 2 casas decimais."""
     if pd.isna(x):
         return np.nan
-    x = float(x)
-    return int(x) if x.is_integer() else round(x, 2)
+
+    return (
+        unicodedata.normalize("NFKD", str(x))
+        .encode("ascii", "ignore")
+        .decode()
+        .strip()
+        .lower()
+    )
 
 
-def _pct(p):
-    return f"{p:.2f}".replace(".", ",") + "%"
+def _eh_sim(serie):
+    """Identifica respostas afirmativas, aceitando texto ou código 1."""
+
+    if pd.api.types.is_numeric_dtype(serie):
+        return serie == 1
+
+    return serie.map(_norm) == "sim"
 
 
-# ---------------------------------------------------------------------------
-# 4) TABELA DE VARIÁVEIS NUMÉRICAS
-# ---------------------------------------------------------------------------
+def _substituir(df, remover, nome_novo, valores):
+    """Remove colunas antigas e insere uma nova na posição da primeira."""
 
-def tabela_numericas(df, specs):
-    linhas = []
-    for spec in specs:
-        if spec["classe"] != NUM:
-            continue
-        bruta = df[spec["codigo"]]
-        s = preparar_numerica(bruta)
-        perdidos = int(bruta.notna().sum() - s.notna().sum())
-        if perdidos:
-            print(f"[AVISO] {spec['codigo']}: {perdidos} valor(es) não numérico(s) "
-                  f"foram tratados como ausentes.")
-        tem = s.notna().any()
-        linha = {
-            "Variável": f'{spec["codigo"]} - {spec["nome"]}',
-            "Tipo": spec["tipo"],
-            "Nº de Ausentes": int(s.isna().sum()),
-            "Mínimo": _valor(s.min()) if tem else np.nan,
-            "Máximo": _valor(s.max()) if tem else np.nan,
-            "Média": round(s.mean(), 2) if tem else np.nan,
-            "Mediana": _valor(s.median()) if tem else np.nan,
-            "Desvio Padrão": round(s.std(), 2) if tem else np.nan,
-        }
-        if INCLUIR_DIMENSAO:
-            linha = {"Dimensão": spec["dimensao"], **linha}
-        linhas.append(linha)
-    return pd.DataFrame(linhas)
+    remover = [c for c in remover if c in df.columns]
+
+    if nome_novo in df.columns and nome_novo not in remover:
+        df = df.drop(columns=[nome_novo])
+
+    pos = (
+        min(df.columns.get_loc(c) for c in remover)
+        if remover else len(df.columns)
+    )
+
+    df = df.drop(columns=remover)
+    df.insert(pos, nome_novo, valores)
+
+    return df, remover
 
 
-# ---------------------------------------------------------------------------
-# 5) TABELA DE VARIÁVEIS CATEGÓRICAS
-# ---------------------------------------------------------------------------
+def converter_renda_numerica(serie):
+    """
+    Converte renda em número.
+    Aceita números, decimais com vírgula e valores no formato brasileiro,
+    como '3.500,50'.
+    """
 
-def tabela_categoricas(df, specs):
-    linhas = []
-    for spec in specs:
-        if spec["classe"] != CAT:
-            continue
-        s = preparar_categorica(df[spec["codigo"]], spec)
-        cont = s.value_counts(dropna=True)          # já vem do mais para o menos frequente
-        validos = int(cont.sum())
+    def converter(valor):
+        if pd.isna(valor):
+            return np.nan
 
-        ordem = spec.get("ordem") or (list(spec["rotulos"].values()) if spec.get("rotulos") else [])
-        valores = [v for v in ordem if v in cont.index] + [v for v in cont.index if v not in ordem]
+        texto = str(valor).strip()
+        texto = texto.replace("R$", "").replace(" ", "")
 
-        if spec["tipo"] == "B" and len(valores) != 2:
-            print(f"[AVISO] {spec['codigo']} foi declarada Binária (B), mas tem "
-                  f"{len(valores)} valores distintos. Revise o tipo no VARSPEC.")
+        if texto == "":
+            return np.nan
 
-        def freq(v):
-            n = int(cont[v])
-            return f"{v}: {n} ({_pct(100 * n / validos)})" if MOSTRAR_PERCENTUAL else f"{v}: {n}"
+        # Se houver vírgula, interpreta o formato brasileiro:
+        # ponto como separador de milhar e vírgula como decimal.
+        if "," in texto:
+            texto = texto.replace(".", "")
+            texto = texto.replace(",", ".")
 
-        linha = {
-            "Variável": f'{spec["codigo"]} - {spec["nome"]}',
-            "Tipo": spec["tipo"],
-            "Nº de Ausentes": int(s.isna().sum()),
-            "Valores": "; ".join(valores),
-            "Frequência por valor": "; ".join(freq(v) for v in valores),
-            "Moda": cont.index[0] if validos else "—",
-        }
-        if INCLUIR_DIMENSAO:
-            linha = {"Dimensão": spec["dimensao"], **linha}
-        linhas.append(linha)
-    return pd.DataFrame(linhas)
-
-
-# ---------------------------------------------------------------------------
-# 6) SAÍDA (EXCEL)
-# ---------------------------------------------------------------------------
-
-def salvar_excel(tab_num, tab_cat, caminho):
-    from openpyxl.styles import Alignment, Font, PatternFill
-    from openpyxl.utils import get_column_letter
-
-    with pd.ExcelWriter(caminho, engine="openpyxl") as writer:
-        tab_num.to_excel(writer, sheet_name="Numéricas", index=False)
-        tab_cat.to_excel(writer, sheet_name="Categóricas", index=False)
-        for ws in writer.book.worksheets:
-            for cel in ws[1]:
-                cel.font = Font(bold=True, color="FFFFFF")
-                cel.fill = PatternFill("solid", start_color="1F4E78")
-                cel.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-            for col in ws.columns:
-                letra = get_column_letter(col[0].column)
-                maior = max(len(str(c.value)) if c.value is not None else 0 for c in col)
-                ws.column_dimensions[letra].width = min(max(maior + 2, 10), 70)
-                for c in col[1:]:
-                    c.alignment = Alignment(vertical="top", wrap_text=True)
-            ws.freeze_panes = "A2"
-
-
-def salvar(tab_num, tab_cat):
-    destino = PASTA / ARQUIVO_SAIDA
-    try:
         try:
-            salvar_excel(tab_num, tab_cat, destino)
-        except PermissionError:   # arquivo aberto no Excel
-            destino = destino.with_name(destino.stem + "_novo.xlsx")
-            salvar_excel(tab_num, tab_cat, destino)
-        print(f"\nArquivo salvo em: {destino}")
-    except ImportError:
-        tab_num.to_csv(PASTA / "ap5_tabela_numericas.csv", index=False, encoding="utf-8-sig")
-        tab_cat.to_csv(PASTA / "ap5_tabela_categoricas.csv", index=False, encoding="utf-8-sig")
-        print("\n[AVISO] 'openpyxl' não está instalado; salvei em CSV na pasta do script.")
-        print("Para gerar o .xlsx, rode no terminal:  pip install openpyxl")
+            return float(texto)
+        except ValueError:
+            return np.nan
+
+    return serie.map(converter)
 
 
 # ---------------------------------------------------------------------------
-# 7) EXECUÇÃO PRINCIPAL
+# 3) TRANSFORMAÇÕES
+# ---------------------------------------------------------------------------
+
+def contar_comorbidades(df):
+    cols = [c for c in COLUNAS_COMORBIDADES if c in df.columns]
+
+    if not cols:
+        return pd.Series(pd.NA, index=df.index, dtype="Int64")
+
+    qtd = pd.concat(
+        [_eh_sim(df[c]) for c in cols],
+        axis=1
+    ).sum(axis=1)
+
+    ausentes = df[cols].isna().sum(axis=1)
+
+    print(f"   Colunas contadas ({len(cols)}): {cols}")
+    print(
+        "   Pessoas com pelo menos uma resposta ausente: "
+        f"{int((ausentes > 0).sum())}"
+    )
+
+    if not AUSENTE_COMO_NAO:
+        qtd = qtd.where(ausentes == 0)
+
+    return qtd.astype("Int64")
+
+
+def classificar_alcool(df):
+    freq = df["P027"]
+
+    if "P02801" in df.columns:
+        dias = pd.to_numeric(df["P02801"], errors="coerce")
+    else:
+        dias = pd.Series(np.nan, index=df.index)
+
+    if pd.api.types.is_numeric_dtype(freq):
+        freq_n = freq.map({
+            1: "nao bebo nunca",
+            2: "menos de uma vez por mes",
+            3: "uma vez ou mais por mes",
+        })
+    else:
+        freq_n = freq.map(_norm)
+
+    nunca = freq_n == "nao bebo nunca"
+    menos_mes = freq_n == "menos de uma vez por mes"
+    mes_ou_mais = freq_n == "uma vez ou mais por mes"
+
+    sempre = mes_ou_mais & (dias >= DIAS_SEMANA_PARA_SEMPRE)
+
+    as_vezes = menos_mes | (
+        mes_ou_mais & (dias < DIAS_SEMANA_PARA_SEMPRE)
+    )
+
+    resultado = np.select(
+        [nunca, as_vezes, sempre],
+        [ROTULO_NUNCA, ROTULO_AS_VEZES, ROTULO_SEMPRE],
+        default=""
+    )
+
+    resultado = pd.Series(resultado, index=df.index, dtype=object)
+
+    indeterminados = int((resultado == "").sum())
+
+    if indeterminados:
+        print(
+            "   [AVISO] "
+            f"{indeterminados} pessoa(s) sem informação suficiente "
+            "ficaram sem classificação de álcool."
+        )
+
+    return resultado.where(resultado != "", np.nan)
+
+
+def mapear_regiao(df):
+    uf = df[COLUNA_UF]
+
+    if pd.api.types.is_numeric_dtype(uf):
+        regiao = (uf // 10).map(REGIAO_POR_PRIMEIRO_DIGITO)
+    else:
+        mapa = {
+            _norm(estado): regiao
+            for regiao, estados in REGIOES_POR_UF.items()
+            for estado in estados
+        }
+
+        regiao = uf.map(_norm).map(mapa)
+
+    nao_mapeadas = regiao.isna() & uf.notna()
+
+    if nao_mapeadas.any():
+        valores = sorted(uf[nao_mapeadas].astype(str).unique())
+
+        print(
+            "   [AVISO] UF não reconhecida: "
+            f"{valores}"
+        )
+
+    return regiao
+
+
+# ---------------------------------------------------------------------------
+# 4) EXECUÇÃO
 # ---------------------------------------------------------------------------
 
 def main():
     caminho = localizar_csv()
+    df, separador = ler_csv(caminho)
+
     print(f"Lendo: {caminho}")
-    df = ler_csv(caminho)
-    print(f"Registros: {len(df)} | Colunas no CSV: {len(df.columns)}")
+    print(
+        f"Antes: {df.shape[0]} registros x "
+        f"{df.shape[1]} colunas\n"
+    )
 
-    specs = [s for s in VARSPEC if s["codigo"] not in IGNORAR]
+    n_colunas_antes = df.shape[1]
 
-    faltando = [s["codigo"] for s in specs if s["codigo"] not in df.columns]
-    if faltando:
-        print(f"[AVISO] Variáveis do VARSPEC que NÃO estão no CSV (serão puladas): {faltando}")
-        specs = [s for s in specs if s["codigo"] in df.columns]
+    # -----------------------------------------------------------------------
+    # 1) FILTRO DE RENDA PER CAPITA
+    # -----------------------------------------------------------------------
 
-    extras = [c for c in df.columns if c not in {s["codigo"] for s in VARSPEC}]
-    if extras:
-        print(f"[AVISO] Colunas do CSV que não estão no VARSPEC (não entram nas tabelas): {extras}")
+    print("1) Filtro de renda per capita")
 
-    if len(df) == 0:
-        raise SystemExit("O CSV está vazio.")
+    if COLUNA_RENDA_PER_CAPITA not in df.columns:
+        raise SystemExit(
+            f"A coluna '{COLUNA_RENDA_PER_CAPITA}' não foi encontrada "
+            "no CSV.\n"
+            f"Colunas disponíveis: {list(df.columns)}"
+        )
 
-    tab_num = tabela_numericas(df, specs)
-    tab_cat = tabela_categoricas(df, specs)
+    renda = converter_renda_numerica(df[COLUNA_RENDA_PER_CAPITA])
 
-    pd.set_option("display.width", 250)
-    print(f"\n===== VARIÁVEIS NUMÉRICAS ({len(tab_num)}) =====")
-    print(tab_num.to_string(index=False, max_colwidth=60))
-    print(f"\n===== VARIÁVEIS CATEGÓRICAS ({len(tab_cat)}) =====")
-    print(tab_cat.to_string(index=False, max_colwidth=60))
-    print(f"\nTotal de variáveis nas tabelas: {len(tab_num) + len(tab_cat)}")
+    n_antes_filtro = len(df)
 
-    salvar(tab_num, tab_cat)
+    # Mantém somente rendas estritamente inferiores a R$ 3.500,00.
+    # Registros com renda ausente ou inválida também são excluídos.
+    df = df.loc[
+        renda.notna() & (renda < LIMITE_RENDA_PER_CAPITA)
+    ].copy()
+
+    removidos = n_antes_filtro - len(df)
+
+    print(f"   Variável utilizada: {COLUNA_RENDA_PER_CAPITA}")
+    print(f"   Limite: abaixo de R$ {LIMITE_RENDA_PER_CAPITA:.2f}")
+    print(f"   Registros antes do filtro: {n_antes_filtro}")
+    print(f"   Registros removidos: {removidos}")
+    print(f"   Registros mantidos: {len(df)}")
+
+    # -----------------------------------------------------------------------
+    # 2) COMORBIDADES
+    # -----------------------------------------------------------------------
+
+    if any(c in df.columns for c in COLUNAS_COMORBIDADES):
+        print("\n2) Comorbidades")
+
+        qtd = contar_comorbidades(df)
+
+        df, removidas = _substituir(
+            df,
+            COLUNAS_COMORBIDADES,
+            NOME_COL_COMORBIDADES,
+            qtd
+        )
+
+        print(f"   Colunas removidas: {removidas}")
+        print(f"   Distribuição de {NOME_COL_COMORBIDADES}:")
+
+        print(
+            df[NOME_COL_COMORBIDADES]
+            .value_counts(dropna=False)
+            .sort_index()
+            .to_string()
+        )
+    else:
+        print("\n2) Comorbidades: nenhuma coluna encontrada; etapa pulada.")
+
+    # -----------------------------------------------------------------------
+    # 3) CONSUMO DE ÁLCOOL
+    # -----------------------------------------------------------------------
+
+    if "P027" in df.columns:
+        print("\n3) Consumo de álcool")
+
+        alcool = classificar_alcool(df)
+
+        df, removidas = _substituir(
+            df,
+            COLUNAS_ALCOOL,
+            NOME_COL_ALCOOL,
+            alcool
+        )
+
+        print(f"   Colunas removidas: {removidas}")
+        print(f"   Distribuição de {NOME_COL_ALCOOL}:")
+
+        print(
+            df[NOME_COL_ALCOOL]
+            .value_counts(dropna=False)
+            .to_string()
+        )
+    else:
+        print("\n3) Álcool: coluna P027 não encontrada; etapa pulada.")
+
+    # -----------------------------------------------------------------------
+    # 4) REGIÃO
+    # -----------------------------------------------------------------------
+
+    if COLUNA_UF in df.columns:
+        print("\n4) Região")
+
+        regiao = mapear_regiao(df)
+
+        df, removidas = _substituir(
+            df,
+            [COLUNA_UF],
+            NOME_COL_REGIAO,
+            regiao
+        )
+
+        print(f"   Coluna removida: {removidas}")
+        print(f"   Distribuição de {NOME_COL_REGIAO}:")
+
+        print(
+            df[NOME_COL_REGIAO]
+            .value_counts(dropna=False)
+            .to_string()
+        )
+    else:
+        print(
+            f"\n4) Região: coluna {COLUNA_UF} não encontrada; "
+            "etapa pulada."
+        )
+
+    # -----------------------------------------------------------------------
+    # 5) REMOÇÃO DE PESO E ALTURA
+    # -----------------------------------------------------------------------
+
+    a_remover = [
+        c for c in COLUNAS_REMOVER
+        if c in df.columns
+    ]
+
+    print(
+        "\n5) Colunas retiradas: "
+        f"{a_remover or 'nenhuma (já não existiam)'}"
+    )
+
+    df = df.drop(columns=a_remover)
+
+    # -----------------------------------------------------------------------
+    # 6) SALVAMENTO
+    # -----------------------------------------------------------------------
+
+    destino = caminho.with_name(NOME_CSV_SAIDA)
+
+    # Nunca sobrescreve o CSV original.
+    if destino.resolve() == caminho.resolve():
+        destino = caminho.with_name(
+            caminho.stem + "_novo.csv"
+        )
+
+    try:
+        df.to_csv(
+            destino,
+            index=False,
+            sep=separador,
+            encoding="utf-8-sig"
+        )
+    except PermissionError:
+        destino = destino.with_name(
+            destino.stem + "_novo.csv"
+        )
+
+        df.to_csv(
+            destino,
+            index=False,
+            sep=separador,
+            encoding="utf-8-sig"
+        )
+
+    print("\n" + "=" * 60)
+    print("PROCESSAMENTO CONCLUÍDO")
+    print("=" * 60)
+
+    print(f"Registros finais: {df.shape[0]}")
+    print(f"Colunas finais: {df.shape[1]}")
+    print(
+        f"Variação no número de colunas: "
+        f"{df.shape[1] - n_colunas_antes:+d}"
+    )
+    print(f"Arquivo salvo em: {destino}")
 
 
 if __name__ == "__main__":
